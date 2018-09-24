@@ -1,0 +1,218 @@
+---
+format_version: 1.0.0
+default_step_lib_source: https://github.com/bitrise-io/bitrise-steplib.git
+project_type: ios
+workflows:
+  _begin:
+    - git-clone: {}
+    - cache-pull: {}
+    - script:
+        title: Install Tool Managers
+        inputs:
+        - content: |-
+            #!/usr/bin/env bash
+            set -e -x # -e to fail, -x to log
+
+            if ! [ -x "$(command -v brew)" ]; then
+              /usr/bin/ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"
+            fi
+
+            envman add --key BREW_BIN_PATH --value $(readlink `which brew`)
+            envman add --key BREW_SYMLINK_PATH --value $(which brew)
+
+            brew install mint
+    description: Clones the Git repo & installs tool managers.
+  _run-linters:
+    steps:
+    - script:
+        title: Install Required Tools
+        inputs:
+        - content: |-
+            #!/usr/bin/env bash
+            set -e -x # -e to fail, -x to log
+
+            brew install bartycrouch
+
+            if ! [ -x "$(command -v swiftlint)" ]; then
+              mint install https://github.com/Dschee/SwiftLint@master swiftlint --verbose
+            fi
+
+            envman add --key SWIFTLINT_BIN_PATH --value $(readlink `which swiftlint`)
+            envman add --key SWIFTLINT_SYMLINK_PATH --value $(which swiftlint)
+
+            if ! [ -x "$(command -v projlint)" ]; then
+              mint install JamitLabs/ProjLint --verbose
+            fi
+
+            envman add --key PROJLINT_BIN_PATH --value $(readlink `which projlint`)
+            envman add --key PROJLINT_SYMLINK_PATH --value $(which projlint)
+    - script:
+        title: Run Linters
+        inputs:
+        - content: |-
+            #!/usr/bin/env bash
+            set -e -x # -e to fail, -x to log
+
+            swiftlint
+            projlint lint
+            bartycrouch lint -p "$BITRISE_SOURCE_DIR/Sources" -d -e
+    description: Installs and runs several linters, including bartycrouch lint, swiftlint
+      & projlint.
+  _prepare-build:
+    steps:
+    - carthage:
+        inputs:
+        - carthage_options: "--platform ios --cache-builds"
+    - script:
+        title: Delete Unnecessary Dependencies
+        inputs:
+        - content: |-
+            #!/usr/bin/env bash
+            set -e -x # -e to fail, -x to log
+
+            rm -rf ./Carthage/Build/Mac
+            rm -rf ./Carthage/Build/tvOS
+            rm -rf ./Carthage/Build/watchOS
+
+            rm -rf ./Carthage/Build/iOS/ReactiveMoya.framework
+            rm -rf ./Carthage/Build/iOS/ReactiveMoya.framework.dSYM
+
+            rm -rf ./Carthage/Build/iOS/ReactiveSwift.framework
+            rm -rf ./Carthage/Build/iOS/ReactiveSwift.framework.dSYM
+
+            rm -rf ./Carthage/Build/iOS/RxBlocking.framework
+            rm -rf ./Carthage/Build/iOS/RxBlocking.framework.dSYM
+
+            rm -rf ./Carthage/Build/iOS/RxCocoa.framework
+            rm -rf ./Carthage/Build/iOS/RxCocoa.framework.dSYM
+
+            rm -rf ./Carthage/Build/iOS/RxMoya.framework
+            rm -rf ./Carthage/Build/iOS/RxMoya.framework.dSYM
+
+            rm -rf ./Carthage/Build/iOS/RxSwift.framework
+            rm -rf ./Carthage/Build/iOS/RxSwift.framework.dSYM
+
+            rm -rf ./Carthage/Build/iOS/RxTest.framework
+            rm -rf ./Carthage/Build/iOS/RxTest.framework.dSYM
+    - certificate-and-profile-installer: {}
+    description: Installs dependencies, certificates & profiles.
+  _run-tests:
+    steps:
+    - xcode-test:
+        inputs:
+        - scheme: App
+        - simulator_device: iPhone X
+    description: Runs Xcode Unit & UI Tests.
+  _deploy:
+    description: Deploys the app on App Store Connect.
+    steps:
+    - set-xcode-build-number:
+        inputs:
+        - plist_path: App/SupportingFiles/Info.plist
+    - xcode-archive: {}
+    - deploy-to-itunesconnect-application-loader:
+        inputs:
+        - password: "$APPLE_ID_PASSWORD"
+        - itunescon_user: "$APPLE_ID"
+  _notify-if-failed:
+    steps:
+    - slack:
+        run_if: '{{ and .IsBuildFailed (and (getenv "SLACK_CHANNEL" | ne "TODO") (getenv
+          "SLACK_WEBHOOK_URL" | ne "TODO") ) }}'
+        inputs:
+        - channel: "$SLACK_CHANNEL"
+        - from_username: Bitrise CI
+        - from_username_on_error: Bitrise CI
+        - message: "CI on $BITRISE_GIT_BRANCH completed successfully. Congratulations!
+            \U0001F389"
+        - message_on_error: "CI failed on $BITRISE_GIT_BRANCH. \U0001F494 Please make
+            me happy again! \U0001F633"
+        - image_url: ":no_entry_sign:"
+        - image_url_on_error: ":no_entry_sign:"
+        - icon_url: https://bitrise-public-content-production.s3.amazonaws.com/slack/bitrise-slack-icon-128.png
+        - icon_url_on_error: https://bitrise-public-content-production.s3.amazonaws.com/slack/bitrise-slack-error-icon-128.png
+        - timestamp: 'no'
+        - fields: |-
+            Committer|${GIT_CLONE_COMMIT_AUTHOR_NAME}
+            Branch|${BITRISE_GIT_BRANCH}
+        - buttons: |-
+            View App|${BITRISE_APP_URL}
+            View Build|${BITRISE_BUILD_URL}
+        - footer: ''
+        - footer_on_error: ''
+        - pretext: ''
+        - pretext_on_error: ''
+        - author_name: ''
+        - webhook_url: "$SLACK_WEBHOOK_URL"
+    description: Sends a notification to Slack on failed CI build (if configured).
+  _end:
+    steps:
+    - cache-push:
+        inputs:
+        - cache_paths: |-
+            $BREW_BIN_PATH
+            $BREW_SYMLINK_PATH
+            $SWIFTLINT_BIN_PATH
+            $SWIFTLINT_SYMLINK_PATH
+            $PROJLINT_BIN_PATH
+            $PROJLINT_SYMLINK_PATH
+            $TRANSLATION_MANAGER_BIN_PATH
+            $TRANSLATION_MANAGER_SYMLINK_PATH
+            ./Cartfile.resolved
+            ./Carthage -> ./Cartfile.resolved
+            $BITRISE_CACHE_DIR
+    description: Pushes the new cache (if needed).
+  merge-request:
+    before_run:
+    - _begin
+    - _run-linters
+    - _prepare-build
+    - _run-tests
+    after_run:
+    - _end
+    description: CI tasks to be run on merge requests & other work branches.
+  stable:
+    before_run:
+    - _begin
+    - _run-linters
+    - _prepare-build
+    - _run-tests
+    after_run:
+    - _notify-if-failed
+    - _end
+    description: CI tasks to be run after merge/push to stable branch, including notifying if fails.
+  staging:
+    before_run:
+    - _begin
+    - _prepare-build
+    after_run:
+    - _deploy
+    - _notify-if-failed
+    - _end
+    description: CI tasks to be run for pre-release tag pushes, including deploying
+      to App Store.
+  productive:
+    before_run:
+    - _begin
+    - _prepare-build
+    after_run:
+    - _deploy
+    - _notify-if-failed
+    - _end
+    description: CI tasks to be run for release tag pushes, including deploying to
+      App Store.
+app:
+  envs:
+  - BITRISE_PROJECT_PATH: TODO.xcodeproj
+  - BITRISE_SCHEME: App
+  - SLACK_CHANNEL: TODO
+  - SLACK_WEBHOOK_URL: TODO
+trigger_map:
+- push_branch: stable
+  workflow: stable
+- pull_request_source_branch: "*"
+  workflow: merge-request
+- tag: "*.*.*-*"
+  workflow: staging
+- tag: "*.*.*"
+  workflow: productive
