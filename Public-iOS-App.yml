@@ -4,6 +4,7 @@ default_step_lib_source: https://github.com/bitrise-io/bitrise-steplib.git
 project_type: ios
 workflows:
   _begin:
+    steps:
     - git-clone: {}
     - cache-pull: {}
     - script:
@@ -180,7 +181,8 @@ workflows:
     after_run:
     - _notify-if-failed
     - _end
-    description: CI tasks to be run after merge/push to stable branch, including notifying if fails.
+    description: CI tasks to be run after merge/push to stable branch, including notifying
+      if fails.
   staging:
     before_run:
     - _begin
