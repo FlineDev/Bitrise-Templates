@@ -104,7 +104,7 @@ workflows:
   _build-with-cocoapods:
     steps:
     - script:
-        title: Build with Carthage
+        title: Build with CocoaPods
         inputs:
         - content: |-
             #!/usr/bin/env bash
@@ -124,7 +124,6 @@ workflows:
             $PROJLINT_SYMLINK_PATH
             $BITRISE_CACHE_DIR
     description: Closes the CI by pushing a new cache (if necessary).
-
   macOS:
     before_run:
     - _git-checkout
