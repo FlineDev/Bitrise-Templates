@@ -1,0 +1,155 @@
+---
+format_version: 1.0.0
+default_step_lib_source: https://github.com/bitrise-io/bitrise-steplib.git
+project_type: other
+workflows:
+  _git-checkout:
+    steps:
+    - git-clone: {}
+  _macos-begin:
+    steps:
+    - cache-pull: {}
+    - script:
+        title: Install Tool Managers
+        inputs:
+        - content: |-
+            #!/usr/bin/env bash
+            set -e -x # -e to fail, -x to log
+
+            if ! [ -x "$(command -v brew)" ]; then
+              /usr/bin/ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"
+            fi
+
+            envman add --key BREW_BIN_PATH --value $(readlink `which brew`)
+            envman add --key BREW_SYMLINK_PATH --value $(which brew)
+
+            brew install mint
+    description: Clones the Git repo & installs tool managers.
+  _linux-begin:
+    steps:
+    - script:
+        title: Install Swift
+        inputs:
+        - content: |-
+            #!/usr/bin/env bash
+            set -e -x # -e to fail, -x to log
+
+            # Install prerequisites
+            sudo apt-get -y install clang libicu-dev libpython2.7 libcurl4-openssl-dev
+
+            # Install SwiftEnv
+            mkdir .swiftenv
+            git clone --depth=1 https://github.com/kylef/swiftenv.git ~/.swiftenv
+            echo 'export SWIFTENV_ROOT="$HOME/.swiftenv"' >> ~/.bash_profile
+            echo 'export PATH="$SWIFTENV_ROOT/bin:$PATH"' >> ~/.bash_profile
+            echo 'eval "$(swiftenv init -)"' >> ~/.bash_profile
+            source ~/.bash_profile
+
+            # Install latest stable Swift version
+            swiftenv install $SWIFT_VERSION
+  _run-linters:
+    steps:
+    - script:
+        title: Install Required Tools
+        inputs:
+        - content: |-
+            #!/usr/bin/env bash
+            set -e -x # -e to fail, -x to log
+
+            if ! [ -x "$(command -v swiftlint)" ]; then
+              mint install https://github.com/Dschee/SwiftLint@master swiftlint --verbose
+            fi
+
+            envman add --key SWIFTLINT_BIN_PATH --value $(readlink `which swiftlint`)
+            envman add --key SWIFTLINT_SYMLINK_PATH --value $(which swiftlint)
+
+            if ! [ -x "$(command -v projlint)" ]; then
+              mint install JamitLabs/ProjLint --verbose
+            fi
+
+            envman add --key PROJLINT_BIN_PATH --value $(readlink `which projlint`)
+            envman add --key PROJLINT_SYMLINK_PATH --value $(which projlint)
+    - script:
+        title: Run Linters
+        inputs:
+        - content: |-
+            #!/usr/bin/env bash
+            set -e -x # -e to fail, -x to log
+
+            swiftlint
+            projlint lint
+    description: Installs and runs several linters, including swiftlint & projlint.
+  _run-tests:
+    steps:
+    - script:
+        title: Run Tests
+        inputs:
+        - content: |-
+            #!/usr/bin/env bash
+            set -e -x # -e to fail, -x to log
+
+            source ~/.bash_profile # for Linux
+            swift test
+    description: Runs tests using SPM.
+  _build-with-carthage:
+    steps:
+    - script:
+        title: Build with Carthage
+        inputs:
+        - content: |-
+            #!/usr/bin/env bash
+            set -e -x # -e to fail, -x to log
+
+            carthage build --no-skip-current
+  _build-with-cocoapods:
+    steps:
+    - script:
+        title: Build with Carthage
+        inputs:
+        - content: |-
+            #!/usr/bin/env bash
+            set -e -x # -e to fail, -x to log
+
+            pod spec lint
+  _macos-end:
+    steps:
+    - cache-push:
+        inputs:
+        - cache_paths: |-
+            $BREW_BIN_PATH
+            $BREW_SYMLINK_PATH
+            $SWIFTLINT_BIN_PATH
+            $SWIFTLINT_SYMLINK_PATH
+            $PROJLINT_BIN_PATH
+            $PROJLINT_SYMLINK_PATH
+            $BITRISE_CACHE_DIR
+    description: Closes the CI by pushing a new cache (if necessary).
+
+  macOS:
+    before_run:
+    - _git-checkout
+    - _macos-begin
+    - _run-linters
+    - _run-tests
+    - _build-with-carthage
+    - _build-with-cocoapods
+    after_run:
+    - _macos-end
+  Linux:
+    before_run:
+    - _git-checkout
+    - _linux-begin
+    - _run-tests
+    meta:
+      bitrise.io:
+        stack: linux-docker-android
+app:
+  envs:
+  - SWIFT_VERSION: '4.2'
+trigger_map:
+- push_branch: stable
+  workflow: macOS
+- push_branch: work/*
+  workflow: Linux
+- pull_request_source_branch: "*"
+  workflow: macOS
